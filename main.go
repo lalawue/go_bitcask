@@ -9,11 +9,8 @@ import (
 )
 
 // Config ... database path
-type Config struct {
-	dbPath string
-}
-
-var config = Config{}
+var config = bitcask.Config{}
+var maxFileSize uint = 64 * 1024 * 1024
 
 func init() {
 	var dbPath string
@@ -22,12 +19,31 @@ func init() {
 	} else {
 		dbPath = "/tmp/go_bitcask"
 	}
-	flag.StringVar(&config.dbPath, "db", dbPath, "database location")
+	flag.StringVar(&config.Path, "path", dbPath, "database location")
+	flag.StringVar(&config.BucketName, "name", "0", "database bucket name")
+	flag.UintVar(&maxFileSize, "size", maxFileSize, "database max data size")
 }
 
 func main() {
 	flag.Parse()
-	fmt.Println("using database path:", config.dbPath)
+	config.DataFileSize = uint32(maxFileSize)
+	fmt.Printf("using database: %+v\n", config)
+	// open database
 	b := bitcask.Bitcask{}
-	b.OpenDB(config.dbPath)
+	db, err := b.OpenDB(&config)
+	if err != nil {
+		fmt.Printf("failed to open database, %s\n", err.Error())
+		return
+	}
+	err = db.Set("a", []byte("b"))
+	if err != nil {
+		fmt.Printf("failed to set database: %s\n", err.Error())
+		return
+	}
+	val, err := db.Get("a")
+	if err != nil {
+		fmt.Printf("failed to get database: %s\n", err.Error())
+		return
+	}
+	fmt.Printf("get '%s'\n", string(val))
 }
