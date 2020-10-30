@@ -10,7 +10,7 @@ import (
 
 // Config ... database path
 var config = bitcask.Config{}
-var maxFileSize uint = 64 * 1024 * 1024
+var maxFileSize uint = 512 // 512 byte
 
 func init() {
 	var dbPath string
