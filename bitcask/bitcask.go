@@ -1,8 +1,10 @@
 package bitcask
 
 import (
+	"bytes"
 	"container/list"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"reflect"
 	"runtime"
@@ -22,6 +24,7 @@ type Config struct {
 type Bitcask struct {
 	config     *Config // config
 	bucketName string  // current active bucket
+	crc32table *crc32.Table
 	buckets    map[string]bucketInfo
 }
 
@@ -32,7 +35,6 @@ type bucketInfo struct {
 	maxFid   uint32                // max file id
 	freeFids *list.List            // free file id list
 	keyInfos map[string]recordInfo // key info map
-	fp       *os.File              // opened active file
 	buf      []byte                // reader cache
 }
 
@@ -59,6 +61,7 @@ func (b *Bitcask) OpenDB(config *Config) (*Bitcask, error) {
 	b.config = config
 	b.buckets = make(map[string]bucketInfo)
 	b.bucketName = config.BucketName
+	b.crc32table = crc32.MakeTable(crc32.Castagnoli)
 	b._bucketCreate(config.BucketName)
 	return b, nil
 }
@@ -74,16 +77,16 @@ func (b *Bitcask) Get(key string) ([]byte, error) {
 		return nil, nil
 	}
 	// read fid file
-	if fp, err := os.Open(b._fidPath(ri.fid, b.bucketName)); err == nil {
+	if fp, err := os.Open(_fidPath(b, ri.fid, b.bucketName)); err == nil {
 		defer fp.Close()
 		ri.offset = 0
 		offset, err := fp.Seek(int64(ri.offset), os.SEEK_SET) // relative to file begin
 		if uint32(offset) != ri.offset || err != nil {
 			return nil, fmt.Errorf("failed to get seek")
 		}
-		rri, keyStr, value, err := bi._readRecord(fp, true)
-		if err == nil && *keyStr == key && rri.crc32 == ri.crc32 {
-			return value, nil
+		rri, rkey, rvalue, err := bi._readRecord(fp, true)
+		if err == nil && *rkey == key && rri.crc32 == _crc32Bytes(b, []byte(*rkey), rvalue) {
+			return rvalue, nil
 		}
 		return nil, err
 	}
@@ -96,39 +99,23 @@ func (b *Bitcask) Set(key string, value []byte) error {
 		return fmt.Errorf("invalid set params")
 	}
 	bi := b.buckets[b.bucketName]
-	oldActFid := bi.actFid
-	fid, offset := b._activeFid(bi)
+	// old entry exist, delete old first
+	err := b.Remove(key)
+	if err != nil {
+		return err
+	}
 	// create recordinfo
+	fid, offset := _activeFid(b, &bi)
 	ri := recordInfo{
 		ti:     uint32(time.Now().Unix()),
 		fid:    fid,
 		offset: offset,
 		ksize:  uint32(len(key)),
 		vsize:  uint32(len(value)),
-		crc32:  0,
+		crc32:  _crc32Bytes(b, []byte(key), value),
 	}
-	// try close/open active fid file
-	if bi.fp == nil || oldActFid != bi.actFid {
-		if bi.fp != nil {
-			bi.fp.Close()
-		}
-		fidPath := b._fidPath(bi.actFid, bi.name)
-		if _, err := os.Stat(fidPath); err == nil {
-			bi.fp, err = os.OpenFile(fidPath, os.O_WRONLY|os.O_APPEND, 0755)
-			if err != nil {
-				return err
-			}
-		} else {
-			if fp, err := os.Create(fidPath); err == nil {
-				bi.fp = fp
-			} else {
-				return fmt.Errorf("failed to create set fid file")
-			}
-		}
-	}
-	// FIXME: erase key first
 	// write key, value
-	err := bi._writeRecord(&ri, &key, value)
+	err = bi._writeRecord(_fidPath(b, fid, ""), &ri, &key, value)
 	if err != nil {
 		return err
 	}
@@ -137,17 +124,23 @@ func (b *Bitcask) Set(key string, value []byte) error {
 	return nil
 }
 
-// Erase .. erase key in database
-func (b *Bitcask) Erase(key string) error {
+// Remove .. delete key in database
+func (b *Bitcask) Remove(key string) error {
 	if len(key) <= 0 {
 		return fmt.Errorf("invalid erase params")
 	}
 	bi := b.buckets[b.bucketName]
-	_, ok := bi.keyInfos[key]
+	ri, ok := bi.keyInfos[key]
 	if !ok {
-		return fmt.Errorf("key not exist")
+		return nil
 	}
-	// FIXME: insert erase ri info
+	ri.vsize = 0 // mark deleted, keep record's old fid and offset
+	fid, _ := _activeFid(b, &bi)
+	err := bi._writeRecord(_fidPath(b, fid, ""), &ri, &key, nil)
+	if err != nil {
+		// calm to keep mem record's vsize to 0
+		return err
+	}
 	delete(bi.keyInfos, key)
 	return nil
 }
@@ -218,22 +211,38 @@ func (bi *bucketInfo) _readRecord(fp *os.File, readValue bool) (*recordInfo, *st
 }
 
 // write record info
-func (bi *bucketInfo) _writeRecord(ri *recordInfo, key *string, value []byte) error {
-	//fmt.Println(bi.fp)
+func (bi *bucketInfo) _writeRecord(fidPath string, ri *recordInfo, key *string, value []byte) error {
+	// open/append file pointer
+	var fp *os.File = nil
+	var err error = nil
+	if _, err = os.Stat(fidPath); err == nil {
+		fp, err = os.OpenFile(fidPath, os.O_WRONLY|os.O_APPEND, 0755)
+		if err != nil {
+			return err
+		}
+	} else {
+		if fp, err = os.Create(fidPath); err != nil {
+			return fmt.Errorf("failed to create set fid file")
+		}
+	}
+	defer fp.Close()
+	// write record
 	buf := _recordInfoToBytes(ri)
-	count, err := bi.fp.Write(buf[:_recordSize])
+	count, err := fp.Write(buf[:_recordSize])
 	if count != _recordSize || err != nil {
 		return err
 	}
-	count, err = bi.fp.Write([]byte(*key))
+	count, err = fp.Write([]byte(*key))
 	if count != len(*key) || err != nil {
 		return fmt.Errorf("failed to write record key")
 	}
-	count, err = bi.fp.Write(value)
-	if count != len(value) || err != nil {
-		return fmt.Errorf("failed to write record value")
+	if value != nil {
+		count, err = fp.Write(value)
+		if count != len(value) || err != nil {
+			return fmt.Errorf("failed to write record value")
+		}
 	}
-	bi.fp.Sync()
+	fp.Sync()
 	return nil
 }
 
@@ -247,12 +256,15 @@ func _indexString(fid uint32) string {
 }
 
 // fid to real file id name
-func (b *Bitcask) _fidPath(fid uint32, bucketName string) string {
+func _fidPath(b *Bitcask, fid uint32, bucketName string) string {
+	if len(bucketName) <= 0 {
+		bucketName = b.bucketName
+	}
 	return fmt.Sprintf("%s/%s/%s.dat", b.config.Path, bucketName, _indexString(fid))
 }
 
 // get next available fid from free list or increase max fid
-func (b *Bitcask) _nextEmptyFid(bucket bucketInfo) uint32 {
+func _nextEmptyFid(b *Bitcask, bucket *bucketInfo) uint32 {
 	if bucket.freeFids.Len() > 0 {
 		fidElement := bucket.freeFids.Back()
 		bucket.actFid = fidElement.Value.(uint32)
@@ -265,11 +277,11 @@ func (b *Bitcask) _nextEmptyFid(bucket bucketInfo) uint32 {
 }
 
 // get current/next active fid
-func (b *Bitcask) _activeFid(bucket bucketInfo) (uint32, uint32) {
+func _activeFid(b *Bitcask, bucket *bucketInfo) (uint32, uint32) {
 	actFid := bucket.actFid
 	var offset uint32 = 0
 	for {
-		info, err := os.Stat(b._fidPath(actFid, bucket.name))
+		info, err := os.Stat(_fidPath(b, actFid, bucket.name))
 		if err != nil {
 			break
 		}
@@ -277,7 +289,7 @@ func (b *Bitcask) _activeFid(bucket bucketInfo) (uint32, uint32) {
 			if actFid != bucket.maxFid {
 				actFid = bucket.maxFid
 			} else {
-				actFid = b._nextEmptyFid(bucket)
+				actFid = _nextEmptyFid(b, bucket)
 			}
 		} else {
 			offset = uint32(info.Size())
@@ -306,4 +318,15 @@ func _validateConfig(config *Config) {
 	if len(config.BucketName) <= 0 {
 		config.BucketName = "0"
 	}
+}
+
+// calculate crc32 from multiple []byte slice
+func _crc32Bytes(b *Bitcask, pBytes ...[]byte) uint32 {
+	plen := len(pBytes)
+	sBytes := make([][]byte, plen)
+	for i := 0; i < plen; i++ {
+		sBytes[i] = pBytes[i]
+	}
+	jBytes := bytes.Join(sBytes, nil)
+	return crc32.Checksum(jBytes, b.crc32table)
 }

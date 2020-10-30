@@ -35,12 +35,31 @@ func main() {
 		fmt.Printf("failed to open database, %s\n", err.Error())
 		return
 	}
+
+	// 1. set
 	err = db.Set("a", []byte("b"))
 	if err != nil {
 		fmt.Printf("failed to set database: %s\n", err.Error())
 		return
 	}
+
+	// 2. get
 	val, err := db.Get("a")
+	if err != nil {
+		fmt.Printf("failed to get database: %s\n", err.Error())
+		return
+	}
+	fmt.Printf("get '%s'\n", string(val))
+
+	// 3. del
+	err = db.Remove("a")
+	if err != nil {
+		fmt.Printf("failed to delete: %s\n", err.Error())
+		return
+	}
+
+	// 4. get again
+	val, err = db.Get("a")
 	if err != nil {
 		fmt.Printf("failed to get database: %s\n", err.Error())
 		return
