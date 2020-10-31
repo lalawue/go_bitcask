@@ -26,6 +26,7 @@ func init() {
 
 func main() {
 	flag.Parse()
+
 	config.DataFileSize = uint32(maxFileSize)
 	fmt.Printf("using database: %+v\n", config)
 
@@ -99,12 +100,12 @@ func testBucket(db *bitcask.Bitcask, config *bitcask.Config) error {
 
 func testGetSet(db *bitcask.Bitcask, count int, value string) error {
 
-	for i := 1; i < count; i++ {
+	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("%d", i)
 		db.Set(name, []byte(value+name))
 	}
 
-	for i := 1; i < count; i++ {
+	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("%d", i)
 		val, err := db.Get(name)
 		if err != nil {
@@ -120,7 +121,7 @@ func testGetSet(db *bitcask.Bitcask, count int, value string) error {
 
 func testDelete(db *bitcask.Bitcask, count int) error {
 
-	for i := 1; i < count; i += 2 {
+	for i := 0; i < count; i += 2 {
 		name := fmt.Sprintf("%d", i)
 		err := db.Remove(name)
 		if err != nil {
@@ -128,7 +129,7 @@ func testDelete(db *bitcask.Bitcask, count int) error {
 		}
 	}
 
-	for i := 1; i < count; i += 2 {
+	for i := 0; i < count; i += 2 {
 		name := fmt.Sprintf("%d", i)
 		val, err := db.Get(name)
 		if err != nil {
@@ -142,11 +143,14 @@ func testDelete(db *bitcask.Bitcask, count int) error {
 }
 
 func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string) error {
-	db.GC("0")
+	err := db.GC("0")
+	if err != nil {
+		return err
+	}
 	db.CloseDB()
 
 	b := bitcask.Bitcask{}
-	db, err := b.OpenDB(config)
+	db, err = b.OpenDB(config)
 	if err != nil {
 		return err
 	}
@@ -157,9 +161,9 @@ func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string
 		if err != nil {
 			return err
 		}
-		if i%2 == 1 && val != nil {
+		if i%2 == 0 && val != nil {
 			return fmt.Errorf("after gc, got deleted entry %s", name)
-		} else if i%2 == 0 && string(val) != (value+name) {
+		} else if i%2 == 1 && string(val) != (value+name) {
 			return fmt.Errorf("after gc, got invalid entry %s", name)
 		}
 	}
