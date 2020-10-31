@@ -28,6 +28,7 @@ func main() {
 	flag.Parse()
 	config.DataFileSize = uint32(maxFileSize)
 	fmt.Printf("using database: %+v\n", config)
+
 	// open database
 	b := bitcask.Bitcask{}
 	db, err := b.OpenDB(&config)
@@ -36,33 +37,131 @@ func main() {
 		return
 	}
 
-	// 1. set
-	err = db.Set("a", []byte("b"))
+	// test bucket
+	err = testBucket(db, &config)
 	if err != nil {
-		fmt.Printf("failed to set database: %s\n", err.Error())
+		fmt.Println(err.Error())
 		return
 	}
+	fmt.Println("Pass Bucket")
 
-	// 2. get
+	count := 256
+	value := "abcdefghijklmnopqrstuvwxyz"
+
+	// test get set
+	err = testGetSet(db, count, value)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	fmt.Println("PASS Set/Get")
+
+	// test delete
+	err = testDelete(db, count)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	fmt.Println("PASS Delete")
+
+	// test GC
+	err = testGC(db, &config, count, value)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	fmt.Println("PASS GC")
+}
+
+func testBucket(db *bitcask.Bitcask, config *bitcask.Config) error {
+	// test bucket
+	db.ChangeBucket("hello")
+	db.Set("a", []byte("b"))
+
+	_, err := os.Stat(config.Path + "/hello/0000000000.dat")
+	if err != nil {
+		return fmt.Errorf("failed to change bucket")
+	}
+
 	val, err := db.Get("a")
-	if err != nil {
-		fmt.Printf("failed to get database: %s\n", err.Error())
-		return
-	}
-	fmt.Printf("get '%s'\n", string(val))
-
-	// 3. del
-	err = db.Remove("a")
-	if err != nil {
-		fmt.Printf("failed to delete: %s\n", err.Error())
-		return
+	if err != nil || string(val) != "b" {
+		return fmt.Errorf("failed to get bucket value")
 	}
 
-	// 4. get again
+	db.ChangeBucket("0")
 	val, err = db.Get("a")
-	if err != nil {
-		fmt.Printf("failed to get database: %s\n", err.Error())
-		return
+	if err != nil || val != nil {
+		return fmt.Errorf("invalid bucket namespace")
 	}
-	fmt.Printf("get '%s'\n", string(val))
+
+	return nil
+}
+
+func testGetSet(db *bitcask.Bitcask, count int, value string) error {
+
+	for i := 1; i < count; i++ {
+		name := fmt.Sprintf("%d", i)
+		db.Set(name, []byte(value+name))
+	}
+
+	for i := 1; i < count; i++ {
+		name := fmt.Sprintf("%d", i)
+		val, err := db.Get(name)
+		if err != nil {
+			return err
+		}
+		if string(val) != (value + name) {
+			return fmt.Errorf("Invalid get %d, %s", i, string(val))
+		}
+	}
+
+	return nil
+}
+
+func testDelete(db *bitcask.Bitcask, count int) error {
+
+	for i := 1; i < count; i += 2 {
+		name := fmt.Sprintf("%d", i)
+		err := db.Remove(name)
+		if err != nil {
+			return err
+		}
+	}
+
+	for i := 1; i < count; i += 2 {
+		name := fmt.Sprintf("%d", i)
+		val, err := db.Get(name)
+		if err != nil {
+			return err
+		} else if val != nil {
+			return fmt.Errorf("failed to get %s", name)
+		}
+	}
+
+	return nil
+}
+
+func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string) error {
+	db.GC("0")
+	db.CloseDB()
+
+	b := bitcask.Bitcask{}
+	db, err := b.OpenDB(config)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < count; i++ {
+		name := fmt.Sprintf("%d", i)
+		val, err := db.Get(name)
+		if err != nil {
+			return err
+		}
+		if i%2 == 1 && val != nil {
+			return fmt.Errorf("after gc, got deleted entry %s", name)
+		} else if i%2 == 0 && string(val) != (value+name) {
+			return fmt.Errorf("after gc, got invalid entry %s", name)
+		}
+	}
+	return nil
 }
