@@ -563,15 +563,12 @@ func mergeRecordInfos(b *bitcask, bi *bucketInfo, name string, rmMapList map[uin
 	for inFid, lst := range rmMapList {
 		inPath := fidPath(b, inFid, name)
 		hasSkip := false
-		if inFp, err := os.Open(inPath); err == nil {
-			defer inFp.Close()
+		if inFp, inErr := os.Open(inPath); inErr == nil {
 			for {
 				inOffset, _ := inFp.Seek(0, os.SEEK_CUR)
 				inri, inkey, invalue, err := readRecord(inFp, true)
 				if err != nil {
-					if err != io.EOF {
-						return err
-					}
+					inErr = err
 					break
 				}
 				if isInList(lst, inFid, uint32(inOffset)) {
@@ -588,9 +585,13 @@ func mergeRecordInfos(b *bitcask, bi *bucketInfo, name string, rmMapList map[uin
 					}
 				}
 			}
+			inFp.Close()
+			if inErr != nil && inErr != io.EOF {
+				return inErr
+			}
 		} else {
 			// failed to open file
-			return err
+			return inErr
 		}
 		if hasSkip {
 			os.Remove(inPath)
