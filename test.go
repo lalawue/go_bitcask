@@ -31,8 +31,7 @@ func main() {
 	fmt.Printf("using database: %+v\n", config)
 
 	// open database
-	b := bitcask.Bitcask{}
-	db, err := b.OpenDB(&config)
+	db, err := bitcask.OpenDB(&config)
 	if err != nil {
 		fmt.Printf("failed to open database, %s\n", err.Error())
 		return
@@ -74,7 +73,7 @@ func main() {
 	fmt.Println("PASS GC")
 }
 
-func testBucket(db *bitcask.Bitcask, config *bitcask.Config) error {
+func testBucket(db bitcask.Bitcask, config *bitcask.Config) error {
 	// test bucket
 	db.ChangeBucket("hello")
 	db.Set("a", []byte("b"))
@@ -98,7 +97,7 @@ func testBucket(db *bitcask.Bitcask, config *bitcask.Config) error {
 	return nil
 }
 
-func testGetSet(db *bitcask.Bitcask, count int, value string) error {
+func testGetSet(db bitcask.Bitcask, count int, value string) error {
 
 	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("%d", i)
@@ -119,7 +118,7 @@ func testGetSet(db *bitcask.Bitcask, count int, value string) error {
 	return nil
 }
 
-func testDelete(db *bitcask.Bitcask, count int) error {
+func testDelete(db bitcask.Bitcask, count int) error {
 
 	for i := 0; i < count; i += 2 {
 		name := fmt.Sprintf("%d", i)
@@ -142,7 +141,7 @@ func testDelete(db *bitcask.Bitcask, count int) error {
 	return nil
 }
 
-func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string) error {
+func testGC(db bitcask.Bitcask, config *bitcask.Config, count int, value string) error {
 	err := db.GC("hello")
 	if err != nil {
 		return err
@@ -153,8 +152,7 @@ func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string
 	}
 	db.CloseDB()
 
-	b := bitcask.Bitcask{}
-	db, err = b.OpenDB(config)
+	db, err = bitcask.OpenDB(config)
 	if err != nil {
 		return err
 	}

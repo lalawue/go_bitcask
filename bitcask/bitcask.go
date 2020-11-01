@@ -17,6 +17,16 @@ import (
 	"unsafe"
 )
 
+// Bitcask ... bitcask database interface
+type Bitcask interface {
+	CloseDB()
+	ChangeBucket(name string) error
+	Get(key string) ([]byte, error)
+	Set(key string, value []byte) error
+	Remove(key string) error
+	GC(name string) error
+}
+
 // Config ... database config
 type Config struct {
 	Path         string // default '/tmp/go_bitcask'
@@ -24,15 +34,15 @@ type Config struct {
 	DataFileSize uint32 // default 64MB
 }
 
-// Bitcask ... bitcask database
-type Bitcask struct {
+// bitcask ... bitcask database control unit
+type bitcask struct {
 	config     *Config // config
 	bucketName string  // current active bucket
 	crc32table *crc32.Table
 	buckets    map[string]bucketInfo
 }
 
-// database slot
+// database bucket slot
 type bucketInfo struct {
 	name     string                // bucket name
 	actFid   uint32                // act file id
@@ -57,7 +67,8 @@ type recordInfo struct {
 const recordSize int = int(unsafe.Sizeof(recordInfo{}))
 
 // OpenDB ... open database
-func (b *Bitcask) OpenDB(config *Config) (*Bitcask, error) {
+func OpenDB(config *Config) (Bitcask, error) {
+	b := bitcask{}
 	validateConfig(config)
 	if _, err := os.Stat(config.Path); err != nil {
 		os.MkdirAll(config.Path, 0755)
@@ -65,21 +76,21 @@ func (b *Bitcask) OpenDB(config *Config) (*Bitcask, error) {
 	b.config = config
 	b.buckets = make(map[string]bucketInfo)
 	b.bucketName = config.BucketName
-	b.crc32table = crc32.MakeTable(crc32.Castagnoli)
+	b.crc32table = crc32.MakeTable(crc32.IEEE)
 	// load bucket and key/recordInfo
-	err := loadBucketsInfo(b)
+	err := loadBucketsInfo(&b)
 	if err != nil {
 		return nil, err
 	}
-	err = loadKeysInfo(b)
+	err = loadKeysInfo(&b)
 	if err != nil {
 		return nil, err
 	}
-	return b, nil
+	return &b, nil
 }
 
 // CloseDB ... close database
-func (b *Bitcask) CloseDB() {
+func (b *bitcask) CloseDB() {
 	b.config = nil
 	b.buckets = make(map[string]bucketInfo)
 	b.bucketName = ""
@@ -87,7 +98,7 @@ func (b *Bitcask) CloseDB() {
 }
 
 // ChangeBucket ... change active bucket
-func (b *Bitcask) ChangeBucket(name string) error {
+func (b *bitcask) ChangeBucket(name string) error {
 	if len(b.buckets) <= 0 || len(name) <= 0 {
 		return fmt.Errorf("invalid bucket name or empty map")
 	}
@@ -100,7 +111,7 @@ func (b *Bitcask) ChangeBucket(name string) error {
 }
 
 // Get ... get value with key
-func (b *Bitcask) Get(key string) ([]byte, error) {
+func (b *bitcask) Get(key string) ([]byte, error) {
 	if len(b.buckets) <= 0 || len(key) <= 0 {
 		return nil, fmt.Errorf("invalid key or empty map")
 	}
@@ -126,7 +137,7 @@ func (b *Bitcask) Get(key string) ([]byte, error) {
 }
 
 // Set ... set key, value
-func (b *Bitcask) Set(key string, value []byte) error {
+func (b *bitcask) Set(key string, value []byte) error {
 	if len(b.buckets) <= 0 || len(key) <= 0 || len(value) <= 0 {
 		return fmt.Errorf("invalid set params or empty map")
 	}
@@ -160,7 +171,7 @@ func (b *Bitcask) Set(key string, value []byte) error {
 }
 
 // Remove .. delete key in database
-func (b *Bitcask) Remove(key string) error {
+func (b *bitcask) Remove(key string) error {
 	if len(b.buckets) <= 0 || len(key) <= 0 {
 		return fmt.Errorf("invalid erase params or empty map")
 	}
@@ -184,7 +195,7 @@ func (b *Bitcask) Remove(key string) error {
 }
 
 // GC ... run gabage collection in bucket
-func (b *Bitcask) GC(name string) error {
+func (b *bitcask) GC(name string) error {
 	if len(name) <= 0 {
 		name = b.bucketName
 	}
@@ -216,7 +227,7 @@ func (b *Bitcask) GC(name string) error {
  */
 
 // create bucket dir and insert into _buckets
-func createBucket(b *Bitcask, name string, maxFid uint32) *bucketInfo {
+func createBucket(b *bitcask, name string, maxFid uint32) *bucketInfo {
 	path := filepath.Join(b.config.Path, name)
 	if _, err := os.Stat(path); err != nil {
 		os.Mkdir(path, 0755)
@@ -265,7 +276,7 @@ func readFileInfoInDir(dirPath string, callback fileInfoCallback) error {
 }
 
 // load every buckets info
-func loadBucketsInfo(b *Bitcask) error {
+func loadBucketsInfo(b *bitcask) error {
 	dbPath := b.config.Path
 	// check ervery bucket dir
 	err := readFileInfoInDir(dbPath, func(dirInfo os.FileInfo) error {
@@ -300,7 +311,7 @@ func loadBucketsInfo(b *Bitcask) error {
 }
 
 // load key infos
-func loadKeysInfo(b *Bitcask) error {
+func loadKeysInfo(b *bitcask) error {
 	for bucketName, bi := range b.buckets {
 		var fid uint32 = 0
 		for fid = 0; fid <= bi.maxFid; fid++ {
@@ -329,7 +340,7 @@ func loadKeysInfo(b *Bitcask) error {
 }
 
 // read last gc time
-func readBucketInfo(b *Bitcask, name string) (int64, error) {
+func readBucketInfo(b *bitcask, name string) (int64, error) {
 	infoPath := filepath.Join(b.config.Path, name+".info")
 	var buf []byte = nil
 	var err error = nil
@@ -344,7 +355,7 @@ func readBucketInfo(b *Bitcask, name string) (int64, error) {
 }
 
 // write last gc time
-func writeBucketInfo(b *Bitcask, name string) error {
+func writeBucketInfo(b *bitcask, name string) error {
 	infoPath := filepath.Join(b.config.Path, name+".info")
 	bufString := fmt.Sprintf("%d", time.Now().Unix())
 	return ioutil.WriteFile(infoPath, []byte(bufString), 0755)
@@ -431,7 +442,7 @@ func writeRecord(fidPath string, ri *recordInfo, key string, value []byte) error
  */
 
 // fid to real file id name
-func fidPath(b *Bitcask, fid uint32, bucketName string) string {
+func fidPath(b *bitcask, fid uint32, bucketName string) string {
 	if len(bucketName) <= 0 {
 		bucketName = b.bucketName
 	}
@@ -452,7 +463,7 @@ func nextEmptyFid(bi *bucketInfo) uint32 {
 }
 
 // get current/next active fid
-func activeFid(b *Bitcask, bi *bucketInfo) (uint32, uint32) {
+func activeFid(b *bitcask, bi *bucketInfo) (uint32, uint32) {
 	actFid := bi.actFid
 	var offset uint32 = 0
 	for {
@@ -479,7 +490,7 @@ func activeFid(b *Bitcask, bi *bucketInfo) (uint32, uint32) {
  */
 
 // collect delete/mark record info
-func collectDeletedRecordInfos(b *Bitcask, bi *bucketInfo, name string, rmTable map[uint32]*list.List) error {
+func collectDeletedRecordInfos(b *bitcask, bi *bucketInfo, name string, rmTable map[uint32]*list.List) error {
 	// get last gc time
 	lastSecond, _ := readBucketInfo(b, name)
 	lastTime := time.Unix(lastSecond, 0)
@@ -534,7 +545,7 @@ func collectDeletedRecordInfos(b *Bitcask, bi *bucketInfo, name string, rmTable 
 	return nil
 }
 
-func mergeRecordInfos(b *Bitcask, bi *bucketInfo, name string, rmMapList map[uint32]*list.List) error {
+func mergeRecordInfos(b *bitcask, bi *bucketInfo, name string, rmMapList map[uint32]*list.List) error {
 	// check fid, offset in array
 	isInList := func(lst *list.List, fid uint32, offset uint32) bool {
 		for item := lst.Front(); item != nil; item = item.Next() {
