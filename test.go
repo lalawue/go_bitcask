@@ -79,9 +79,9 @@ func testBucket(db *bitcask.Bitcask, config *bitcask.Config) error {
 	db.ChangeBucket("hello")
 	db.Set("a", []byte("b"))
 
-	_, err := os.Stat(config.Path + "/hello/0000000000.dat")
+	_, err := os.Stat(config.Path + "/hello/000000000.dat")
 	if err != nil {
-		return fmt.Errorf("failed to change bucket")
+		return fmt.Errorf("failed to change bucket: %s", err.Error())
 	}
 
 	val, err := db.Get("a")
@@ -143,7 +143,11 @@ func testDelete(db *bitcask.Bitcask, count int) error {
 }
 
 func testGC(db *bitcask.Bitcask, config *bitcask.Config, count int, value string) error {
-	err := db.GC("0")
+	err := db.GC("hello")
+	if err != nil {
+		return err
+	}
+	err = db.GC("0")
 	if err != nil {
 		return err
 	}
