@@ -117,7 +117,7 @@ func (b *Bitcask) Get(key string) ([]byte, error) {
 			return nil, fmt.Errorf("failed to get seek")
 		}
 		rri, rkey, rvalue, err := readRecord(fp, true)
-		if err == nil && rkey == key && rri.crc32 == crc32Bytes(b, []byte(rkey), rvalue) {
+		if err == nil && rkey == key && rri.crc32 == crc32.Checksum(joinBytes([]byte(rkey), rvalue), b.crc32table) {
 			return rvalue, nil
 		}
 		return nil, err
@@ -147,7 +147,7 @@ func (b *Bitcask) Set(key string, value []byte) error {
 		offset: offset,
 		ksize:  uint32(len(key)),
 		vsize:  uint32(len(value)),
-		crc32:  crc32Bytes(b, []byte(key), value),
+		crc32:  crc32.Checksum(joinBytes([]byte(key), value), b.crc32table),
 	}
 	// write key, value
 	err = writeRecord(fidPath(b, fid, ""), &ri, key, value)
@@ -378,19 +378,20 @@ func readRecord(fp *os.File, readValue bool) (*recordInfo, string, []byte, error
 	// map to recordinfo
 	ri := *bytesToRecordInfo(buf)
 	// read key
-	keyBuf := make([]byte, ri.ksize)
-	count, err = fp.Read(keyBuf)
-	if uint32(count) != ri.ksize || err != nil {
-		return nil, "", nil, fmt.Errorf("failed to read key")
+	kvLen := ri.ksize
+	if readValue {
+		kvLen += ri.vsize
+	}
+	kvBuf := make([]byte, kvLen)
+	count, err = fp.Read(kvBuf)
+	if uint32(count) != kvLen || err != nil {
+		return nil, "", nil, fmt.Errorf("failed to read record")
 	}
 	// try read value
+	var keyBuf []byte = kvBuf[:ri.ksize]
 	var valBuf []byte = nil
 	if readValue {
-		valBuf = make([]byte, ri.vsize)
-		count, err = fp.Read(valBuf)
-		if uint32(count) != ri.vsize || err != nil {
-			return nil, "", nil, fmt.Errorf("failed to read value: %s", err.Error())
-		}
+		valBuf = kvBuf[ri.ksize:]
 	} else if ri.vsize > 0 {
 		_, err = fp.Seek(int64(ri.vsize), os.SEEK_CUR)
 		if err != nil {
@@ -418,19 +419,9 @@ func writeRecord(fidPath string, ri *recordInfo, key string, value []byte) error
 	defer fp.Close()
 	// write record
 	buf := recordInfoToBytes(ri)
-	count, err := fp.Write(buf[:recordSize])
-	if count != recordSize || err != nil {
+	count, err := fp.Write(joinBytes(buf[:recordSize], []byte(key), value))
+	if count != (recordSize+len(key)+len(value)) || err != nil {
 		return fmt.Errorf("failed to write record: %s", err.Error())
-	}
-	count, err = fp.Write([]byte(key))
-	if count != len(key) || err != nil {
-		return fmt.Errorf("failed to write record key: %s", err.Error())
-	}
-	if value != nil {
-		count, err = fp.Write(value)
-		if count != len(value) || err != nil {
-			return fmt.Errorf("failed to write record value: %s", err.Error())
-		}
 	}
 	fp.Sync()
 	return nil
@@ -580,8 +571,7 @@ func mergeRecordInfos(b *Bitcask, bi *bucketInfo, name string, rmMapList map[uin
 					inri.fid, inri.offset = activeFid(b, bi)
 					keyInfos[inkey] = *inri
 					// write to active fid
-					outPath := fidPath(b, inri.fid, name)
-					err := writeRecord(outPath, inri, inkey, invalue)
+					err := writeRecord(fidPath(b, inri.fid, name), inri, inkey, invalue)
 					if err != nil {
 						return err
 					}
@@ -623,13 +613,12 @@ func validateConfig(config *Config) {
 	}
 }
 
-// calculate crc32 from multiple []byte slice
-func crc32Bytes(b *Bitcask, pBytes ...[]byte) uint32 {
+// join bytes into one
+func joinBytes(pBytes ...[]byte) []byte {
 	plen := len(pBytes)
 	sBytes := make([][]byte, plen)
 	for i := 0; i < plen; i++ {
 		sBytes[i] = pBytes[i]
 	}
-	jBytes := bytes.Join(sBytes, nil)
-	return crc32.Checksum(jBytes, b.crc32table)
+	return bytes.Join(sBytes, nil)
 }
