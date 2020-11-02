@@ -11,20 +11,19 @@ import (
 type DataFile interface {
 	FileID() uint32
 	Close() error
-	Sync() error
 	Size() uint32
 	ReadAt([]byte, uint32) (uint32, error)
 	Write([]byte) (uint32, error)
 	ModTime() time.Time
-	Seek(uint32) error
 }
 
+// datafile ... control structure
 type dataFile struct {
-	fid    uint32
-	fp     *os.File
-	ra     *mmap.ReaderAt
-	offset uint32
-	ti     time.Time
+	fid    uint32         // file id
+	fp     *os.File       // os.File
+	ra     *mmap.ReaderAt // mmap ReadAt
+	offset uint32         // file size
+	ti     time.Time      // last modified time
 }
 
 // NewDataFile ... create new dataFile
@@ -78,17 +77,11 @@ func (df *dataFile) Close() error {
 	return df.fp.Close()
 }
 
-func (df *dataFile) Sync() error {
-	if df.ra != nil {
-		return nil
-	}
-	return df.fp.Sync()
-}
-
 func (df *dataFile) Size() uint32 {
 	return df.offset
 }
 
+// read mmap or from RDWR file
 func (df *dataFile) ReadAt(buf []byte, offset uint32) (uint32, error) {
 	if df.ra != nil {
 		if df.ra == nil {
@@ -120,9 +113,4 @@ func (df *dataFile) ModTime() time.Time {
 	}
 	stat, _ := df.fp.Stat()
 	return stat.ModTime()
-}
-
-func (df *dataFile) Seek(offset uint32) error {
-	_, err := df.fp.Seek(int64(offset), os.SEEK_SET)
-	return err
 }

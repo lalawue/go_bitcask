@@ -587,7 +587,8 @@ func mergeRecordInfos(b *bitcask, bi *bucketInfo, name string, rmMapList map[uin
 					// write to active fid
 					err := bi.writeRecord(b.fidPath(inri.fid, name), inri.fid, inri, inkey, invalue)
 					if err != nil {
-						return err
+						inErr = err
+						break
 					}
 				}
 				inOffset = inOffset + recordSize + inri.ksize + inri.vsize
