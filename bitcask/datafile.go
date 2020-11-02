@@ -10,6 +10,7 @@ import (
 // DataFile ... DataFile interface
 type DataFile interface {
 	FileID() uint32
+	Sync() error
 	Close() error
 	Size() uint32
 	ReadAt([]byte, uint32) (uint32, error)
@@ -63,6 +64,13 @@ func NewDataFile(path string, fid uint32, readonly bool) (DataFile, error) {
 
 func (df *dataFile) FileID() uint32 {
 	return df.fid
+}
+
+func (df *dataFile) Sync() error {
+	if df.ra != nil {
+		return nil
+	}
+	return df.fp.Sync()
 }
 
 func (df *dataFile) Close() error {

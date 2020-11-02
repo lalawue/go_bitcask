@@ -91,7 +91,10 @@ func OpenDB(config *Config) (Bitcask, error) {
 
 // CloseDB ... close database
 func (b *bitcask) CloseDB() {
-	b.closeBucket(b.bucketName)
+	bi := b.buckets[b.bucketName]
+	if bi.df != nil {
+		bi.df.Close()
+	}
 	b.config = nil
 	b.buckets = make(map[string]bucketInfo)
 	b.bucketName = ""
@@ -103,7 +106,10 @@ func (b *bitcask) ChangeBucket(name string) error {
 	if len(b.buckets) <= 0 || len(name) <= 0 {
 		return fmt.Errorf("invalid bucket name or empty map")
 	}
-	b.closeBucket(b.bucketName)
+	bi := b.buckets[b.bucketName]
+	if bi.df != nil {
+		bi.df.Sync()
+	}
 	_, ok := b.buckets[name]
 	if !ok {
 		b.createBucket(name, 0)
@@ -208,12 +214,12 @@ func (b *bitcask) GC(name string) error {
 		name = b.bucketName
 	}
 	bi, ok := b.buckets[name]
-	defer func() {
-		b.buckets[name] = bi
-	}()
 	if !ok {
 		return fmt.Errorf("invalid bucket name")
 	}
+	defer func() {
+		b.buckets[name] = bi
+	}()
 	// collect delete/mark record info
 	rmMapList := make(map[uint32]*list.List)
 	err := collectDeletedRecordInfos(b, &bi, rmMapList)
@@ -229,7 +235,7 @@ func (b *bitcask) GC(name string) error {
 	}
 	// update last GC time
 	bi.writeBucketInfo(b, name)
-	b.closeBucket(name)
+	bi.df.Sync()
 	return nil
 }
 
@@ -251,14 +257,6 @@ func (b *bitcask) createBucket(name string, maxFid uint32) *bucketInfo {
 	}
 	b.buckets[name] = bi
 	return &bi
-}
-
-func (b *bitcask) closeBucket(name string) {
-	bi, ok := b.buckets[name]
-	if ok && bi.df != nil {
-		bi.df.Close()
-		bi.df = nil
-	}
 }
 
 // get file info callback
@@ -379,7 +377,7 @@ func (bi *bucketInfo) readBucketInfo(b *bitcask, name string) (int64, error) {
 func (bi *bucketInfo) writeBucketInfo(b *bitcask, name string) error {
 	infoPath := filepath.Join(b.config.Path, name+".info")
 	bufString := fmt.Sprintf("%d", time.Now().Unix())
-	return ioutil.WriteFile(infoPath, []byte(bufString), 0660)
+	return ioutil.WriteFile(infoPath, []byte(bufString), 0644)
 }
 
 /* Record
