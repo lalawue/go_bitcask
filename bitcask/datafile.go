@@ -13,7 +13,6 @@ type DataFile interface {
 	Close() error
 	Sync() error
 	Size() uint32
-	Read([]byte) (uint32, error)
 	ReadAt([]byte, uint32) (uint32, error)
 	Write([]byte) (uint32, error)
 	ModTime() time.Time
@@ -38,7 +37,7 @@ func NewDataFile(path string, fid uint32, readonly bool) (DataFile, error) {
 	if readonly {
 		flags = os.O_RDONLY
 	} else {
-		flags = os.O_WRONLY | os.O_APPEND | os.O_CREATE
+		flags = os.O_RDWR | os.O_APPEND | os.O_CREATE
 	}
 
 	df.fp, err = os.OpenFile(path, flags, 0640)
@@ -90,16 +89,19 @@ func (df *dataFile) Size() uint32 {
 	return df.offset
 }
 
-func (df *dataFile) Read(buf []byte) (uint32, error) {
-	count, err := df.fp.Read(buf)
-	return uint32(count), err
-}
-
 func (df *dataFile) ReadAt(buf []byte, offset uint32) (uint32, error) {
-	if df.ra == nil {
-		return 0, nil
+	if df.ra != nil {
+		if df.ra == nil {
+			return 0, nil
+		}
+		count, err := df.ra.ReadAt(buf, int64(offset))
+		return uint32(count), err
 	}
-	count, err := df.ra.ReadAt(buf, int64(offset))
+	_, err := df.fp.Seek(int64(offset), os.SEEK_SET)
+	if err != nil {
+		return 0, err
+	}
+	count, err := df.fp.Read(buf)
 	return uint32(count), err
 }
 
@@ -109,7 +111,6 @@ func (df *dataFile) Write(buf []byte) (uint32, error) {
 		return 0, err
 	}
 	df.offset += uint32(count)
-	df.fp.Sync()
 	return uint32(count), err
 }
 
