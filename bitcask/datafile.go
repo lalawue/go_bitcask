@@ -17,6 +17,7 @@ type DataFile interface {
 	ReadAt([]byte, uint32) (uint32, error)
 	Write([]byte) (uint32, error)
 	ModTime() time.Time
+	Seek(uint32) error
 }
 
 type dataFile struct {
@@ -24,6 +25,7 @@ type dataFile struct {
 	fp     *os.File
 	ra     *mmap.ReaderAt
 	offset uint32
+	ti     time.Time
 }
 
 // NewDataFile ... create new dataFile
@@ -49,6 +51,7 @@ func NewDataFile(path string, fid uint32, readonly bool) (DataFile, error) {
 		return nil, err
 	}
 	df.offset = uint32(stat.Size())
+	df.ti = stat.ModTime()
 
 	if readonly {
 		df.ra, err = mmap.Open(path)
@@ -93,16 +96,10 @@ func (df *dataFile) Read(buf []byte) (uint32, error) {
 }
 
 func (df *dataFile) ReadAt(buf []byte, offset uint32) (uint32, error) {
-	// if df.ra == nil {
-	// 	return 0, nil
-	// }
-	// count, err := df.ra.ReadAt(buf, int64(offset))
-	// return uint32(count), err
-	_, err := df.fp.Seek(int64(offset), os.SEEK_SET)
-	if err != nil {
-		return 0, err
+	if df.ra == nil {
+		return 0, nil
 	}
-	count, err := df.fp.Read(buf)
+	count, err := df.ra.ReadAt(buf, int64(offset))
 	return uint32(count), err
 }
 
@@ -117,6 +114,14 @@ func (df *dataFile) Write(buf []byte) (uint32, error) {
 }
 
 func (df *dataFile) ModTime() time.Time {
+	if df.ra != nil {
+		return df.ti
+	}
 	stat, _ := df.fp.Stat()
 	return stat.ModTime()
+}
+
+func (df *dataFile) Seek(offset uint32) error {
+	_, err := df.fp.Seek(int64(offset), os.SEEK_SET)
+	return err
 }

@@ -157,7 +157,7 @@ func (b *bitcask) Set(key string, value []byte) error {
 		crc32:  crc32.Checksum(joinBytes([]byte(key), value), b.crc32table),
 	}
 	// write key, value
-	err = writeRecord(fidPath(b, fid, ""), &ri, key, value)
+	err = writeRecord(fidPath(b, fid, ""), fid, &ri, key, value)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func (b *bitcask) Remove(key string) error {
 	}
 	ri.vsize = 0 // mark deleted, keep record's old fid and offset
 	fid, _ := activeFid(b, &bi)
-	err := writeRecord(fidPath(b, fid, ""), &ri, key, nil)
+	err := writeRecord(fidPath(b, fid, ""), fid, &ri, key, nil)
 	if err != nil {
 		// calm to keep mem record's vsize to 0
 		return err
@@ -411,9 +411,9 @@ func readRecord(fp DataFile, offset uint32, readValue bool) (*recordInfo, string
 }
 
 // write record info
-func writeRecord(fidPath string, ri *recordInfo, key string, value []byte) error {
+func writeRecord(fidPath string, fid uint32, ri *recordInfo, key string, value []byte) error {
 	// open/append file pointer
-	fp, err := os.OpenFile(fidPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0640)
+	fp, err := NewDataFile(fidPath, fid, false)
 	if err != nil {
 		return fmt.Errorf("failed to create write fid file: %s", err.Error())
 	}
@@ -423,7 +423,6 @@ func writeRecord(fidPath string, ri *recordInfo, key string, value []byte) error
 	if int(count) != (int(recordSize)+len(key)+len(value)) || err != nil {
 		return fmt.Errorf("failed to write record: %s", err.Error())
 	}
-	fp.Sync()
 	return nil
 }
 
@@ -569,7 +568,7 @@ func mergeRecordInfos(b *bitcask, bi *bucketInfo, name string, rmMapList map[uin
 					inri.fid, inri.offset = activeFid(b, bi)
 					keyInfos[inkey] = *inri
 					// write to active fid
-					err := writeRecord(fidPath(b, inri.fid, name), inri, inkey, invalue)
+					err := writeRecord(fidPath(b, inri.fid, name), inri.fid, inri, inkey, invalue)
 					if err != nil {
 						return err
 					}
