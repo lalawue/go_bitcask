@@ -20,6 +20,7 @@ type DataFile interface {
 
 // datafile ... control structure
 type dataFile struct {
+	path   string         // file path
 	fid    uint32         // file id
 	fp     *os.File       // os.File
 	ra     *mmap.ReaderAt // mmap ReadAt
@@ -30,8 +31,10 @@ type dataFile struct {
 // NewDataFile ... create new dataFile
 func NewDataFile(path string, fid uint32, readonly bool) (DataFile, error) {
 	var err error = nil
-	df := dataFile{}
-	df.fid = fid
+	df := dataFile{
+		path: path,
+		fid:  fid,
+	}
 
 	flags := 0
 	if readonly {
@@ -82,7 +85,12 @@ func (df *dataFile) Close() error {
 			return err
 		}
 	}
-	return df.fp.Close()
+	err := df.fp.Close()
+	if df.offset <= 0 {
+		os.Remove(df.path)
+		return nil
+	}
+	return err
 }
 
 func (df *dataFile) Size() uint32 {

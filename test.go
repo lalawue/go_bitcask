@@ -45,7 +45,7 @@ func main() {
 	}
 	fmt.Println("Pass Bucket")
 
-	count := 1024
+	count := 256
 	value := "abcdefghijklmnopqrstuvwxyz"
 
 	// test get set
