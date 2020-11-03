@@ -55,7 +55,7 @@ db.closeDB()
 # Test
 
 ```bash
-$ go run test/.go
+$ go run test.go
 PASS Bucket
 PASS Set/Get
 PASS Delete
